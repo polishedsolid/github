@@ -26,8 +26,21 @@ def _safe_filename(url: str, seen: dict[str, int]) -> str:
     return name
 
 
-def build_zip(page_url: str) -> tuple[io.BytesIO, int]:
+def build_zip(
+    page_url: str,
+    on_progress: callable = None,
+) -> tuple[io.BytesIO, int]:
+    def log(msg: str) -> None:
+        if on_progress:
+            on_progress(msg)
+
+    log("ページを取得して画像URLを収集中...")
     image_urls, favicon_urls = extract_image_urls(page_url)
+    candidates = [
+        url for url in image_urls[:MAX_IMAGES]
+        if not is_favicon_by_url(url) and not is_favicon_by_link_rel(url, favicon_urls)
+    ]
+    log(f"候補画像: {len(candidates)} 件（ファビコン除外済み）")
 
     session = make_session()
     buf = io.BytesIO()
@@ -36,31 +49,31 @@ def build_zip(page_url: str) -> tuple[io.BytesIO, int]:
     failed_urls: list[str] = []
 
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for url in image_urls[:MAX_IMAGES]:
-            if is_favicon_by_url(url):
-                continue
-            if is_favicon_by_link_rel(url, favicon_urls):
-                continue
-
+        for i, url in enumerate(candidates, 1):
+            log(f"  [{i}/{len(candidates)}] ダウンロード中: {url[:80]}")
             image_bytes = fetch_image(session, url, referer=page_url)
             if image_bytes is None:
+                log(f"    → 失敗（スクリーンショットで再試行予定）")
                 failed_urls.append(url)
                 continue
 
-            ok, _ = check_dimensions(image_bytes)
+            ok, reason = check_dimensions(image_bytes)
             if not ok:
+                log(f"    → 除外: {reason}")
                 continue
 
             filename = _safe_filename(url, seen_names)
             zf.writestr(filename, image_bytes)
             count += 1
+            log(f"    → 追加: {filename}")
 
-        # Playwright fallback for failed downloads
         if failed_urls:
+            log(f"\nPlaywright で {len(failed_urls)} 件をスクリーンショット取得中...")
             screenshots = screenshot_images(page_url, failed_urls)
             for url, png_bytes in screenshots.items():
-                ok, _ = check_dimensions(png_bytes)
+                ok, reason = check_dimensions(png_bytes)
                 if not ok:
+                    log(f"    → 除外: {reason}")
                     continue
                 path = urlparse(url).path
                 base_name = os.path.basename(path) or "image"
@@ -68,5 +81,6 @@ def build_zip(page_url: str) -> tuple[io.BytesIO, int]:
                 filename = _safe_filename(base_name + "_screenshot.png", seen_names)
                 zf.writestr(filename, png_bytes)
                 count += 1
+                log(f"    → スクショ追加: {filename}")
 
     return buf, count
