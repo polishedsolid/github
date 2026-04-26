@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import re
 from xml.etree import ElementTree as ET
