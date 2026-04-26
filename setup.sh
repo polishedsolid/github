@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# setup.sh — 依存関係インストール + アプリ起動
+# setup.sh — venv 作成 + 依存関係インストール + アプリ起動
 set -e
+
+VENV_DIR="$(cd "$(dirname "$0")" && pwd)/.venv"
 
 echo "=== Web Image Downloader セットアップ ==="
 echo ""
 
 # ── 動作する Python を探す ──────────────────────────────────────
-# Xcode CLT の Python 3.9 は Tk 8.5 クラッシュの既知バグがあるため除外する
 find_python() {
   local candidates=(
     /opt/homebrew/bin/python3.13
@@ -25,17 +26,13 @@ find_python() {
   for py in "${candidates[@]}"; do
     [ -z "$py" ] && continue
     [ ! -x "$py" ] && continue
-
-    # Xcode CLT の壊れた Python は除外
     if "$py" -c "import sys; exit(0 if sys.version_info >= (3,11) else 1)" 2>/dev/null; then
-      # tkinter が実際に動くか確認（クラッシュなし）
       if "$py" -c "
 import subprocess, sys
-result = subprocess.run(
-  [sys.executable, '-c', 'import tkinter; r=tkinter.Tk(); r.destroy()'],
-  capture_output=True, timeout=5
-)
-exit(result.returncode)
+r = subprocess.run([sys.executable, '-c',
+  'import tkinter; w=tkinter.Tk(); w.destroy()'],
+  capture_output=True, timeout=5)
+exit(r.returncode)
 " 2>/dev/null; then
         echo "$py"
         return 0
@@ -50,30 +47,31 @@ PYTHON=$(find_python 2>/dev/null) || true
 if [ -z "$PYTHON" ]; then
   echo "エラー: 動作する Python 3.11+ が見つかりませんでした。"
   echo ""
-  echo "以下のいずれかをインストールしてください:"
-  echo ""
-  echo "  【推奨】Homebrew でインストール:"
-  echo "    brew install python@3.12 python-tk@3.12"
-  echo ""
-  echo "  【代替】python.org からインストール:"
-  echo "    https://www.python.org/downloads/"
+  echo "  brew install python@3.12 python-tk@3.12"
   echo ""
   exit 1
 fi
 
-echo "使用する Python: $PYTHON ($($PYTHON --version))"
-echo ""
+echo "使用する Python: $PYTHON ($("$PYTHON" --version))"
+
+# ── venv 作成（初回のみ）──────────────────────────────────────
+if [ ! -d "$VENV_DIR" ]; then
+  echo "仮想環境を作成中: $VENV_DIR"
+  "$PYTHON" -m venv "$VENV_DIR"
+fi
+
+VENV_PYTHON="$VENV_DIR/bin/python"
 
 # ── 依存関係インストール ────────────────────────────────────────
 echo "依存関係をインストール中..."
-"$PYTHON" -m pip install -r requirements.txt -q --user
+"$VENV_PYTHON" -m pip install -q -r requirements.txt
 
 # ── Playwright Chromium ────────────────────────────────────────
 echo "Playwright (Chromium) をインストール中..."
-"$PYTHON" -m playwright install chromium
+"$VENV_PYTHON" -m playwright install chromium
 
 echo ""
 echo "セットアップ完了。アプリを起動します..."
 echo ""
 
-"$PYTHON" main.py
+"$VENV_PYTHON" main.py
